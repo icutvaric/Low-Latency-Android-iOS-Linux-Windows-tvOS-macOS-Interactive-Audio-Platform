@@ -17,7 +17,6 @@ public class MainActivity extends AppCompatActivity {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_main);
 
-        exoPlayerWrapper = new ExoPlayerWrapper(this);
 
         // Get the device's sample rate and buffer size to enable
         // low-latency Android audio output, if available.
@@ -34,6 +33,7 @@ public class MainActivity extends AppCompatActivity {
 
         System.loadLibrary("PlayerExample");    // load native library
         Superpowered.StartAudio(samplerate, buffersize);             // start audio engine
+        exoPlayerWrapper = new ExoPlayerWrapper(this, buffersize);
         // If the application crashes, please disable Instant Run under Build, Execution, Deployment in preferences.
     }
 

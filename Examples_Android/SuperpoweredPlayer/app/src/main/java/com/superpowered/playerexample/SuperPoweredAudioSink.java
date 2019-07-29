@@ -2,6 +2,7 @@ package com.superpowered.playerexample;
 
 import android.content.Context;
 import android.support.annotation.Nullable;
+import android.util.Log;
 
 import com.google.android.exoplayer2.PlaybackParameters;
 import com.google.android.exoplayer2.audio.AudioAttributes;
@@ -17,9 +18,17 @@ import java.nio.FloatBuffer;
 class SuperPoweredAudioSink implements AudioSink {
 
     private final DefaultAudioSink defaultAudioSink;
+    private final int chunkSize;
 
-    public SuperPoweredAudioSink(Context context, AudioProcessor[] audioProcessors) {
+    private float[] persistedPcmSlice;
+    private int persistedPcmSlicePosition = 0;
+
+    private int nextFloatBufferPosition = 0;
+
+    public SuperPoweredAudioSink(Context context, AudioProcessor[] audioProcessors, int bufferSize) {
         defaultAudioSink = new DefaultAudioSink(AudioCapabilities.getCapabilities(context), audioProcessors);
+        this.chunkSize = bufferSize; // TODO try with 2 * bufferSize
+        this.persistedPcmSlice = new float[chunkSize];
     }
 
     @Override
@@ -52,15 +61,55 @@ class SuperPoweredAudioSink implements AudioSink {
         defaultAudioSink.handleDiscontinuity();
     }
 
+
     @Override
     public boolean handleBuffer(ByteBuffer buffer, long presentationTimeUs) throws InitializationException, WriteException {
         FloatBuffer floatBuffer = buffer.asFloatBuffer();
-        float[] pcm = new float[floatBuffer.capacity()];
-        for (int i=0; i<floatBuffer.limit(); i++) {
-            pcm[i] = floatBuffer.get(i);
+        floatBuffer.position(nextFloatBufferPosition);
+        int inputBufferSize = floatBuffer.limit() - floatBuffer.position();
+        Log.d("SuperPoweredAudioSink", "HANDLE BUFFER START: FloatBuff capacity: " + floatBuffer.capacity() +  " limit: " + floatBuffer.limit() + " position : " + floatBuffer.position() + " inp buff size: " + inputBufferSize);
+        if(persistedPcmSlicePosition + inputBufferSize <= chunkSize) {
+            for (int i = 0; i< inputBufferSize; i++) {
+                persistedPcmSlice[persistedPcmSlicePosition + i] = floatBuffer.get(i);
+            }
+            int totalFilled = persistedPcmSlicePosition + inputBufferSize;
+
+            if(totalFilled == chunkSize) {
+                boolean chunkProcessed = Superpowered.writeRawPcm(persistedPcmSlice);
+                if(chunkProcessed) {
+                    // chunk was fully processed, in next call start filling new chunk, reset persistedPcmSlicePosition to 0
+                    persistedPcmSlicePosition = 0;
+                    nextFloatBufferPosition = 0;
+                    return true;
+                } else {
+                    // chunk was NOT fully processed, in next call continue filling same chunk, (do not reset persistedPcmSlicePosition)
+                    // and also read same slice from same buffer (do not reset nextFloatBufferPosition)
+                    return false;
+                }
+            } else {
+                persistedPcmSlicePosition += totalFilled;
+                nextFloatBufferPosition = 0;
+                return true; // new buffer object will be provided in next function call, so reset position
+            }
+        } else {
+            int leftToFillTotalChunk = chunkSize - persistedPcmSlicePosition;
+            for (int i = 0; i < leftToFillTotalChunk; i++) {
+                persistedPcmSlice[persistedPcmSlicePosition + i] = floatBuffer.get(i);
+            }
+            boolean chunkProcessed = Superpowered.writeRawPcm(persistedPcmSlice);
+            if(chunkProcessed) {
+                // this slice was processed in SuperPowered, so in next call return same buffer, but start reading from nextFloatBufferPosition
+                int currentPosition = floatBuffer.position();
+                nextFloatBufferPosition = currentPosition + leftToFillTotalChunk;
+                // chunk was processed, start filling new chunk from next call
+                persistedPcmSlicePosition = 0;
+            } else {
+                // this slice was not processed in SuperPowered, so in next call return same buffer, but also start reading from same position to get same slice again (do not update nextFloatBufferPosition)
+                // also do not reset persistedPcmSlicePosition, as it might have been half - filled from some previous call
+            }
+            Log.d("SuperPoweredAudioSink", "HANDLE BUFFER END");
+            return false; // same buffer object will be provided in next function call
         }
-        Superpowered.writeRawPcm(pcm);
-        return true; // returning true means that the whole floatBuffer should be written at once.
     }
 
     @Override

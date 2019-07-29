@@ -36,8 +36,8 @@ public class ExoPlayerWrapper {
     private final SimpleExoPlayer exoPlayer;
     private final DefaultDataSourceFactory defaultDataSourceFactory;
 
-    public ExoPlayerWrapper(Context context) {
-        exoPlayer = ExoPlayerFactory.newSimpleInstance(context, createRenderersFactory(context), new DefaultTrackSelector());
+    public ExoPlayerWrapper(Context context, int bufferSize) {
+        exoPlayer = ExoPlayerFactory.newSimpleInstance(context, createRenderersFactory(context, bufferSize), new DefaultTrackSelector());
         exoPlayer.addListener(new Player.EventListener() {
             @Override
             public void onPlayerError(ExoPlaybackException error) {
@@ -77,11 +77,11 @@ public class ExoPlayerWrapper {
                 .createMediaSource(Uri.parse(url));
     }
 
-    private RenderersFactory createRenderersFactory(Context context) {
+    private RenderersFactory createRenderersFactory(Context context, int bufferSize) {
         return new DefaultRenderersFactory(context) {
             @Override
             protected void buildAudioRenderers(Context context, int extensionRendererMode, MediaCodecSelector mediaCodecSelector, @Nullable DrmSessionManager<FrameworkMediaCrypto> drmSessionManager, boolean playClearSamplesWithoutKeys, AudioProcessor[] audioProcessors, Handler eventHandler, AudioRendererEventListener eventListener, ArrayList<Renderer> out) {
-                out.add(new MediaCodecAudioRenderer(context, mediaCodecSelector, drmSessionManager, playClearSamplesWithoutKeys, eventHandler, eventListener, new SuperPoweredAudioSink(context, audioProcessors)));
+                out.add(new MediaCodecAudioRenderer(context, mediaCodecSelector, drmSessionManager, playClearSamplesWithoutKeys, eventHandler, eventListener, new SuperPoweredAudioSink(context, audioProcessors, bufferSize)));
             }
 
             @Override

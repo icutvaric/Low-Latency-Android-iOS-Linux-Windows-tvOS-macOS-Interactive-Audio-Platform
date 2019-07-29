@@ -6,6 +6,6 @@ public class Superpowered {
     public static native void onForeground();
     public static native void onBackground();
     public static native void Cleanup();
-    public static native void writeRawPcm(float[] rawPcm);
+    public static native boolean writeRawPcm(float[] rawPcm);
 
 }
