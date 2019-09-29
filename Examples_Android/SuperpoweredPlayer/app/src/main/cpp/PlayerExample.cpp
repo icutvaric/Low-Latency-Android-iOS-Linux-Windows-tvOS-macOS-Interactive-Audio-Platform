@@ -3,56 +3,65 @@
 #include <android/log.h>
 #include <OpenSource/SuperpoweredAndroidAudioIO.h>
 #include <Superpowered.h>
-#include <SuperpoweredAdvancedAudioPlayer.h>
 #include <SuperpoweredSimple.h>
-#include <SuperpoweredCPU.h>
 #include <malloc.h>
 #include <SLES/OpenSLES_AndroidConfiguration.h>
 #include <SLES/OpenSLES.h>
 
-#define log_print __android_log_print
-
 static SuperpoweredAndroidAudioIO *audioIO;
-static Superpowered::AdvancedAudioPlayer *player;
+static unsigned int oneSecondNumFrames = 0;
+static unsigned int bufferCapacityFrames = 0;
+static unsigned int readPosFrames = 0;
+static unsigned int writePosFrames = 0;
+static unsigned int numFramesInBuffer = 0;
+static short int *buffer = NULL;
 
 // This is called periodically by the audio engine.
 static bool audioProcessing (
         void * __unused clientdata, // custom pointer
         short int *audio,           // output buffer
         int numberOfFrames,         // number of frames to process
-        int samplerate              // current sample rate in Hz
+        int __unused samplerate     // current sample rate in Hz
 ) {
-    player->outputSamplerate = (unsigned int)samplerate;
-    float playerOutput[numberOfFrames * 2];
+    if (__sync_fetch_and_add(&numFramesInBuffer, 0) >= numberOfFrames) {
+        unsigned int framesCopied = 0;
 
-    if (player->processStereo(playerOutput, false, (unsigned int)numberOfFrames)) {
-        Superpowered::FloatToShortInt(playerOutput, audio, (unsigned int)numberOfFrames);
+        while (numberOfFrames > 0) {
+            unsigned int numFramesToCopy = bufferCapacityFrames - readPosFrames;
+            if (numFramesToCopy > numberOfFrames) numFramesToCopy = (unsigned int)numberOfFrames;
+            memcpy(audio + framesCopied * 2, buffer + readPosFrames * 2, numFramesToCopy * 4);
+
+            readPosFrames += numFramesToCopy;
+            framesCopied += numFramesToCopy;
+            numberOfFrames -= numFramesToCopy;
+            if (readPosFrames >= bufferCapacityFrames) readPosFrames = 0;
+            __sync_fetch_and_sub(&numFramesInBuffer, numFramesToCopy);
+        }
+        //__android_log_print(ANDROID_LOG_DEBUG, "SuperpoweredNative", "consume ok, available %i", numFramesInBuffer);
         return true;
-    } else return false;
+    } else {
+        //__android_log_print(ANDROID_LOG_DEBUG, "SuperpoweredNative", "dropout, has only %i", numFramesInBuffer);
+        return false;
+    }
 }
 
 // StartAudio - Start audio engine and initialize player.
 extern "C" JNIEXPORT void
-Java_com_superpowered_playerexample_MainActivity_NativeInit(JNIEnv *env, jobject __unused obj, jint samplerate, jint buffersize, jstring tempPath) {
+Java_com_superpowered_playerexample_Superpowered_NativeInit(JNIEnv *env, jobject __unused obj, jint samplerate, jint buffersize) {
     Superpowered::Initialize(
             "ExampleLicenseKey-WillExpire-OnNextUpdate",
             false, // enableAudioAnalysis (using SuperpoweredAnalyzer, SuperpoweredLiveAnalyzer, SuperpoweredWaveform or SuperpoweredBandpassFilterbank)
             false, // enableFFTAndFrequencyDomain (using SuperpoweredFrequencyDomain, SuperpoweredFFTComplex, SuperpoweredFFTReal or SuperpoweredPolarFFT)
             false, // enableAudioTimeStretching (using SuperpoweredTimeStretching)
             false, // enableAudioEffects (using any SuperpoweredFX class)
-            true,  // enableAudioPlayerAndDecoder (using SuperpoweredAdvancedAudioPlayer or SuperpoweredDecoder)
+            false,  // enableAudioPlayerAndDecoder (using SuperpoweredAdvancedAudioPlayer or SuperpoweredDecoder)
             false, // enableCryptographics (using Superpowered::RSAPublicKey, Superpowered::RSAPrivateKey, Superpowered::hasher or Superpowered::AES)
             false  // enableNetworking (using Superpowered::httpRequest)
     );
 
-    // setting the temp folder for progressive downloads or HLS playback
-    // not needed for local file playback
-    const char *str = env->GetStringUTFChars(tempPath, 0);
-    Superpowered::AdvancedAudioPlayer::setTempFolder(str);
-    env->ReleaseStringUTFChars(tempPath, str);
-
-    // creating the player
-    player = new Superpowered::AdvancedAudioPlayer((unsigned int)samplerate, 0);
+    oneSecondNumFrames = (unsigned int)samplerate;
+    bufferCapacityFrames = oneSecondNumFrames / 2;
+    buffer = (short int *)malloc((size_t)bufferCapacityFrames * 4);
 
     audioIO = new SuperpoweredAndroidAudioIO (
             samplerate,                     // device native sampling rate
@@ -66,69 +75,47 @@ Java_com_superpowered_playerexample_MainActivity_NativeInit(JNIEnv *env, jobject
     );
 }
 
-// OpenFile - Open file in player, specifying offset and length.
-extern "C" JNIEXPORT void
-Java_com_superpowered_playerexample_MainActivity_OpenFileFromAPK (
-        JNIEnv *env,
-        jobject __unused obj,
-        jstring path,       // path to APK file
-        jint offset,        // offset of audio file
-        jint length         // length of audio file
-) {
-    const char *str = env->GetStringUTFChars(path, 0);
-    player->open(str, offset, length);
-    env->ReleaseStringUTFChars(path, str);
-
-    // open file from any path: player->open("file system path to file");
-    // open file from network (progressive download): player->open("http://example.com/music.mp3");
-    // open HLS stream: player->openHLS("http://example.com/stream");
-}
-
-// onUserInterfaceUpdate - Called periodically. Check and react to player events. This can be done in any thread.
-extern "C" JNIEXPORT jboolean
-Java_com_superpowered_playerexample_MainActivity_onUserInterfaceUpdate(JNIEnv * __unused env, jobject __unused obj) {
-    switch (player->getLatestEvent()) {
-        case Superpowered::PlayerEvent_None:
-        case Superpowered::PlayerEvent_Opening: break; // do nothing
-        case Superpowered::PlayerEvent_Opened: player->play(); break;
-        case Superpowered::PlayerEvent_OpenFailed:
-        {
-            int openError = player->getOpenErrorCode();
-            log_print(ANDROID_LOG_ERROR, "PlayerExample", "Open error %i: %s", openError, Superpowered::AdvancedAudioPlayer::statusCodeToString(openError));
-        }
-            break;
-        case Superpowered::PlayerEvent_ConnectionLost:
-            log_print(ANDROID_LOG_ERROR, "PlayerExample", "Network download failed."); break;
-        case Superpowered::PlayerEvent_ProgressiveDownloadFinished:
-            log_print(ANDROID_LOG_ERROR, "PlayerExample", "Download finished. Path: %s", player->getFullyDownloadedFilePath()); break;
-    }
-
-    if (player->eofRecently()) player->setPosition(0, false, false);
-    return (jboolean)player->isPlaying();
-}
-
-// TogglePlayback - Toggle Play/Pause state of the player.
-extern "C" JNIEXPORT void
-Java_com_superpowered_playerexample_MainActivity_TogglePlayback(JNIEnv * __unused env, jobject __unused obj) {
-    player->togglePlayback();
-    Superpowered::CPU::setSustainedPerformanceMode(player->isPlaying()); // prevent dropouts
-}
-
 // onBackground - Put audio processing to sleep if no audio is playing.
 extern "C" JNIEXPORT void
-Java_com_superpowered_playerexample_MainActivity_onBackground(JNIEnv * __unused env, jobject __unused obj) {
+Java_com_superpowered_playerexample_Superpowered_onBackground(JNIEnv * __unused env, jobject __unused obj) {
     audioIO->onBackground();
 }
 
 // onForeground - Resume audio processing.
 extern "C" JNIEXPORT void
-Java_com_superpowered_playerexample_MainActivity_onForeground(JNIEnv * __unused env, jobject __unused obj) {
+Java_com_superpowered_playerexample_Superpowered_onForeground(JNIEnv * __unused env, jobject __unused obj) {
     audioIO->onForeground();
 }
 
 // Cleanup - Free resources.
 extern "C" JNIEXPORT void
-Java_com_superpowered_playerexample_MainActivity_Cleanup(JNIEnv * __unused env, jobject __unused obj) {
+Java_com_superpowered_playerexample_Superpowered_Cleanup(JNIEnv * __unused env, jobject __unused obj) {
     delete audioIO;
-    delete player;
+    free(buffer);
+}
+
+extern "C" JNIEXPORT jboolean
+Java_com_superpowered_playerexample_Superpowered_HasEnoughAudio(JNIEnv * __unused env, jobject __unused obj) {
+    if (__sync_fetch_and_add(&numFramesInBuffer, 0) > oneSecondNumFrames / 8) return JNI_TRUE; else return JNI_FALSE;
+}
+
+extern "C" JNIEXPORT void
+Java_com_superpowered_playerexample_Superpowered_Append(JNIEnv * __unused env, jobject __unused obj, jshortArray jbuf, jint numFramesInBuf) {
+    jshort *shortArray = env->GetShortArrayElements(jbuf, nullptr);
+    if (!shortArray) return;
+    unsigned int framesConsumed = 0;
+
+    while (numFramesInBuf > 0) {
+        unsigned int numFramesToCopy = bufferCapacityFrames - writePosFrames;
+        if (numFramesToCopy > numFramesInBuf) numFramesToCopy = (unsigned int)numFramesInBuf;
+        memcpy(buffer + writePosFrames * 2, shortArray + framesConsumed * 2, (size_t)numFramesToCopy * 4);
+
+        numFramesInBuf -= numFramesToCopy;
+        writePosFrames += numFramesToCopy;
+        framesConsumed += numFramesToCopy;
+        if (writePosFrames >= bufferCapacityFrames) writePosFrames = 0;
+        __sync_fetch_and_add(&numFramesInBuffer, numFramesToCopy);
+    }
+
+    env->ReleaseShortArrayElements(jbuf, shortArray, 0);
 }
