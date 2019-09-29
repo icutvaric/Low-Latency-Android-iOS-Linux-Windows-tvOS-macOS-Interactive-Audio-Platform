@@ -1,1 +1,42 @@
+# built application files
+*.apk
+*.ap_
+
+# files for the dex VM
+*.dex
+
+# Java class files
+*.class
+
+# generated files
+bin/
+gen/
+target/
+proguard/
+captures/
+
+# Local configuration file (sdk path, etc)
+.gitattributes
+
+# Eclipse project files
+.classpath
+.project
+.settings
+
+# Gradle generated files
+.gradle/
+build/
+
+# Various generated or local specific folders
+proguard_logs/
+projectFilesBackup/
+
+# Intellij IDEA (see https://intellij-support.jetbrains.com/entries/23393067)
+.idea/
+**/*.iml
+
+/local.properties
 **/.DS_Store
+
+**/*.iml
+.cxx/
