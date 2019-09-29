@@ -7,7 +7,7 @@ import android.widget.Button;
 import android.view.View;
 import android.os.Bundle;
 
-public class MainActivity extends AppCompatActivity {
+public class MainActivity extends AppCompatActivity implements SuperpoweredUSBAudioHandler {
     private ExoPlayerWrapper exoPlayerWrapper;
     private boolean playing = false;
 
@@ -34,6 +34,17 @@ public class MainActivity extends AppCompatActivity {
         // If the application crashes, please disable Instant Run under Build, Execution, Deployment in preferences.
 
         exoPlayerWrapper = new ExoPlayerWrapper(this);
+        SuperpoweredUSBAudio usbAudio = new SuperpoweredUSBAudio(getApplicationContext(), this);
+        usbAudio.check();
+    }
+
+    public void onUSBAudioDeviceAttached(int deviceIdentifier) {
+    }
+
+    public void onUSBMIDIDeviceAttached(int deviceIdentifier) {
+    }
+
+    public void onUSBDeviceDetached(int deviceIdentifier) {
     }
 
     // Play/Pause button event.
